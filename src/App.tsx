@@ -4,11 +4,11 @@ import {
   Wifi,
   WifiOff,
   Settings,
-  Sparkles,
 } from 'lucide-react';
 import { ReconnectBanner } from './components/ReconnectBanner';
 import { DocumentList } from './components/DocumentList';
 import { SettingsModal } from './components/SettingsModal';
+import { ImageCompressModal } from './components/ImageCompressModal';
 import { useAuth } from './hooks/useAuth';
 import { authService } from './services/auth';
 import type { DocItem } from './types';
@@ -55,7 +55,7 @@ export const App: React.FC = () => {
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-base tracking-tight text-white">DocManager</h1>
                 <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-950 text-blue-400 border border-blue-800/60">
-                  Step 2
+                  Step 3
                 </span>
               </div>
               <p className="text-[11px] text-neutral-400 leading-none">0-cost client-only PWA</p>
@@ -121,58 +121,12 @@ export const App: React.FC = () => {
         />
       </main>
 
-      {/* Document Quick Preview Modal (Stub for Step 2) */}
-      {selectedDoc && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-md p-5 space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-semibold text-base text-white">{selectedDoc.cleanTitle}</h3>
-                <p className="text-xs text-neutral-400 font-mono mt-0.5">{selectedDoc.name}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedDoc(null)}
-                className="text-neutral-400 hover:text-white p-1 cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="bg-neutral-950 rounded-xl p-3 text-xs space-y-1.5 border border-neutral-800">
-              <div className="flex justify-between">
-                <span className="text-neutral-500">Folder:</span>
-                <span className="text-neutral-300 font-medium truncate max-w-[200px]">{selectedDoc.folderPath}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-500">Category:</span>
-                <span className="text-blue-400 font-medium">{selectedDoc.category}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-500">MIME Type:</span>
-                <span className="text-neutral-300 font-mono text-[11px]">{selectedDoc.mimeType}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-500">File ID:</span>
-                <span className="text-neutral-400 font-mono text-[10px]">{selectedDoc.id}</span>
-              </div>
-            </div>
-
-            <div className="p-3 bg-blue-950/40 border border-blue-800/40 rounded-xl text-xs text-blue-300 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 shrink-0 text-blue-400" />
-              <span>Compression engine and size presets will be unlocked in Step 3 & 4.</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setSelectedDoc(null)}
-              className="w-full min-h-[44px] py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-medium cursor-pointer"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Image Compression & Upload-Size Modal */}
+      <ImageCompressModal
+        doc={selectedDoc}
+        isOpen={!!selectedDoc}
+        onClose={() => setSelectedDoc(null)}
+      />
 
       {/* Settings & Synchronization Modal */}
       <SettingsModal

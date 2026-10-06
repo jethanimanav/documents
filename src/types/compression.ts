@@ -1,0 +1,39 @@
+export interface ImageCompressionOptions {
+  file: Blob | File;
+  targetBytes: number;
+  maxDimension?: number;
+  minQuality?: number;
+  maxQuality?: number;
+  allowWebpConversion?: boolean;
+  progressCallback?: (stage: string, percent?: number) => void;
+}
+
+export interface ImageCompressionResult {
+  blob: Blob;
+  originalBytes: number;
+  outputBytes: number;
+  mimeType: string;
+  width: number;
+  height: number;
+  quality: number;
+  scale: number;
+  achievedTarget: boolean;
+  iterations: number;
+  formatConverted: boolean;
+  reductionPercentage: number;
+  statusMessage?: string;
+}
+
+export interface TargetSizePreset {
+  id: string;
+  label: string;
+  bytes: number;
+}
+
+export const DEFAULT_IMAGE_PRESETS: TargetSizePreset[] = [
+  { id: '100kb', label: '100 KB', bytes: 100 * 1024 },
+  { id: '200kb', label: '200 KB', bytes: 200 * 1024 },
+  { id: '500kb', label: '500 KB', bytes: 500 * 1024 },
+  { id: '1mb', label: '1 MB', bytes: 1024 * 1024 },
+  { id: '2mb', label: '2 MB', bytes: 2 * 1024 * 1024 },
+];
