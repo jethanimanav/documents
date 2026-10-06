@@ -3,19 +3,21 @@ import {
   FileText,
   Wifi,
   WifiOff,
-  Shield,
-  Layers,
+  Settings,
   Sparkles,
-  Smartphone,
 } from 'lucide-react';
 import { ReconnectBanner } from './components/ReconnectBanner';
-import { AuthCard } from './components/AuthCard';
+import { DocumentList } from './components/DocumentList';
+import { SettingsModal } from './components/SettingsModal';
 import { useAuth } from './hooks/useAuth';
 import { authService } from './services/auth';
+import type { DocItem } from './types';
 
 export const App: React.FC = () => {
-  const { isAuthenticated, needsReconnect, user, isIOSStandalone } = useAuth();
+  const { isAuthenticated, needsReconnect, user } = useAuth();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedDoc, setSelectedDoc] = useState<DocItem | null>(null);
 
   useEffect(() => {
     // Initialize Google Identity Services and load stored client ID
@@ -40,27 +42,27 @@ export const App: React.FC = () => {
 
       {/* Top Header */}
       <header
-        className={`sticky top-0 z-40 bg-neutral-900/90 backdrop-blur-md border-b border-neutral-800 transition-all ${
+        className={`sticky top-0 z-40 bg-neutral-900/95 backdrop-blur-md border-b border-neutral-800 transition-all ${
           needsReconnect ? 'pt-16 sm:pt-14' : ''
         }`}
       >
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
               <FileText className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-base tracking-tight text-white">DocManager</h1>
                 <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-blue-950 text-blue-400 border border-blue-800/60">
-                  Step 1
+                  Step 2
                 </span>
               </div>
               <p className="text-[11px] text-neutral-400 leading-none">0-cost client-only PWA</p>
             </div>
           </div>
 
-          {/* Status Badges */}
+          {/* Header Controls: Offline Badge, Auth Status, Settings */}
           <div className="flex items-center gap-2">
             {/* Online / Offline badge */}
             <div
@@ -75,9 +77,11 @@ export const App: React.FC = () => {
               <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
             </div>
 
-            {/* Google Auth Status Badge */}
-            <div
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+            {/* Google Auth Status Pill */}
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className={`min-h-[36px] flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium cursor-pointer border transition-colors ${
                 isAuthenticated
                   ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800 hover:bg-emerald-900/80'
                   : needsReconnect
@@ -87,101 +91,98 @@ export const App: React.FC = () => {
             >
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isAuthenticated ? 'bg-emerald-400 animate-pulse' : needsReconnect ? 'bg-amber-400 animate-ping' : 'bg-neutral-600'
+                  isAuthenticated ? 'bg-emerald-400' : needsReconnect ? 'bg-amber-400 animate-ping' : 'bg-neutral-600'
                 }`}
               />
               <span className="text-xs">
-                {isAuthenticated ? (user?.displayName ? user.displayName.split(' ')[0] : 'Connected') : 'OAuth'}
+                {isAuthenticated ? (user?.displayName ? user.displayName.split(' ')[0] : 'Connected') : 'Connect'}
               </span>
-            </div>
+            </button>
+
+            {/* Settings Button (min 44px tap target) */}
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-neutral-900 hover:bg-neutral-800 active:bg-neutral-950 border border-neutral-800 text-neutral-300 hover:text-white cursor-pointer transition-colors"
+              title="Settings & Synchronization"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </header>
 
       {/* Main Container */}
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-6">
-        {/* Step 1 Verification Banner */}
-        <section className="bg-gradient-to-r from-blue-950/40 via-neutral-900 to-neutral-900 border border-blue-900/40 rounded-2xl p-4 sm:p-5">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-400" />
-                <h2 className="text-sm font-semibold text-white">Step 1: Scaffold + OAuth + Token/Reconnect Flow</h2>
-              </div>
-              <p className="text-xs text-neutral-300">
-                Testing OAuth 2.0 Web Client authentication with strict read-only scope (<code className="text-blue-300">drive.readonly</code>)
-                and resilient 401 token refresh queue.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-[11px] text-neutral-400 bg-neutral-950/80 px-3 py-1.5 rounded-lg border border-neutral-800 shrink-0">
-              <Shield className="w-3.5 h-3.5 text-emerald-400" />
-              <span>In-Memory Token</span>
-            </div>
-          </div>
-        </section>
-
-        {/* Auth & Device Testing Card */}
-        <AuthCard />
-
-        {/* Step 1 Validation & Test Checklist */}
-        <section className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-5 sm:p-6 space-y-4">
-          <div className="flex items-center gap-2.5 text-neutral-200">
-            <Layers className="w-4 h-4 text-blue-400" />
-            <h3 className="font-semibold text-sm">Step 1 Device & Verification Checklist</h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-            <div className="p-3.5 bg-neutral-950/70 border border-neutral-800/80 rounded-xl space-y-1.5">
-              <p className="font-medium text-neutral-200 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                Authorized Origins
-              </p>
-              <p className="text-neutral-400 text-[11px]">
-                Google Cloud requires registering authorized JavaScript origins:
-                <br />
-                <code className="text-neutral-300 font-mono">http://localhost:5173</code> (Desktop/Dev)
-              </p>
-            </div>
-
-            <div className="p-3.5 bg-neutral-950/70 border border-neutral-800/80 rounded-xl space-y-1.5">
-              <p className="font-medium text-neutral-200 flex items-center gap-2">
-                <Smartphone className="w-4 h-4 text-blue-400" />
-                Mobile Device Testing
-              </p>
-              <p className="text-neutral-400 text-[11px]">
-                {isIOSStandalone
-                  ? 'Currently running inside iOS Standalone Home Screen PWA. If popup is blocked by Apple, open in Safari.'
-                  : 'Access via your phone browser on the same Wi-Fi using the local network URL displayed in the Vite terminal.'}
-              </p>
-            </div>
-
-            <div className="p-3.5 bg-neutral-950/70 border border-neutral-800/80 rounded-xl space-y-1.5">
-              <p className="font-medium text-neutral-200 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                401 Interception Test
-              </p>
-              <p className="text-neutral-400 text-[11px]">
-                Click <strong className="text-neutral-300">Simulate 401 Expiry Flow</strong> above to verify that
-                the app immediately pauses background Drive calls and shows the persistent Reconnect banner.
-              </p>
-            </div>
-
-            <div className="p-3.5 bg-neutral-950/70 border border-neutral-800/80 rounded-xl space-y-1.5">
-              <p className="font-medium text-neutral-200 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
-                Next Step Preview
-              </p>
-              <p className="text-neutral-400 text-[11px]">
-                Step 2 will implement the recursive root folder walk, breadth-first crawler, Dexie IndexedDB cache,
-                instant MiniSearch in-memory index, and Drive Changes API sync.
-              </p>
-            </div>
-          </div>
-        </section>
+        {/* Document Library Home Screen */}
+        <DocumentList
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onSelectDoc={(doc) => setSelectedDoc(doc)}
+        />
       </main>
+
+      {/* Document Quick Preview Modal (Stub for Step 2) */}
+      {selectedDoc && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-md p-5 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-base text-white">{selectedDoc.cleanTitle}</h3>
+                <p className="text-xs text-neutral-400 font-mono mt-0.5">{selectedDoc.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedDoc(null)}
+                className="text-neutral-400 hover:text-white p-1 cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="bg-neutral-950 rounded-xl p-3 text-xs space-y-1.5 border border-neutral-800">
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Folder:</span>
+                <span className="text-neutral-300 font-medium truncate max-w-[200px]">{selectedDoc.folderPath}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Category:</span>
+                <span className="text-blue-400 font-medium">{selectedDoc.category}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500">MIME Type:</span>
+                <span className="text-neutral-300 font-mono text-[11px]">{selectedDoc.mimeType}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500">File ID:</span>
+                <span className="text-neutral-400 font-mono text-[10px]">{selectedDoc.id}</span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-blue-950/40 border border-blue-800/40 rounded-xl text-xs text-blue-300 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 shrink-0 text-blue-400" />
+              <span>Compression engine and size presets will be unlocked in Step 3 & 4.</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSelectedDoc(null)}
+              className="w-full min-h-[44px] py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-medium cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Settings & Synchronization Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
 
       {/* Footer */}
       <footer className="border-t border-neutral-800/60 py-4 text-center text-xs text-neutral-500">
-        Personal Document Manager & Upload-Size Utility &bull; $0 Forever &bull; Strictly Read-Only
+        Personal Document Manager &bull; $0 Forever &bull; Strictly Read-Only
       </footer>
     </div>
   );
