@@ -3,6 +3,9 @@ import {
   formatTargetLabel,
   generateOutputFilename,
   getExtensionForMimeType,
+  generateMergedFilename,
+  generatePageToolFilename,
+  generateImagesToPdfFilename,
 } from '../filename';
 
 describe('Filename and Target Size Label Utilities', () => {
@@ -71,6 +74,26 @@ describe('Filename and Target Size Label Utilities', () => {
       expect(generateOutputFilename('ScannedDocument', 200 * 1024, 'image/jpeg')).toBe(
         'ScannedDocument_200KB.jpg'
       );
+    });
+  });
+
+  describe('generateMergedFilename and generatePageToolFilename', () => {
+    it('generates merged filename based on first file', () => {
+      expect(generateMergedFilename('passport.pdf')).toBe('passport-merged.pdf');
+      expect(generateMergedFilename('cert.scan.pdf')).toBe('cert.scan-merged.pdf');
+      expect(generateMergedFilename('')).toBe('merged-document.pdf');
+    });
+
+    it('generates page tool filenames', () => {
+      expect(generatePageToolFilename('taxes.pdf', 'extracted')).toBe('taxes-extracted.pdf');
+      expect(generatePageToolFilename('deed.pdf', 'modified')).toBe('deed-modified.pdf');
+      expect(generatePageToolFilename('', 'extracted')).toBe('document-extracted.pdf');
+    });
+
+    it('generates image-to-PDF filenames', () => {
+      expect(generateImagesToPdfFilename('receipt.jpg')).toBe('receipt-combined.pdf');
+      expect(generateImagesToPdfFilename('photo.scan.png')).toBe('photo.scan-combined.pdf');
+      expect(generateImagesToPdfFilename('')).toBe('images-combined.pdf');
     });
   });
 });

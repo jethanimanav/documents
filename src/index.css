@@ -2,28 +2,127 @@
 
 @layer base {
   :root {
-    --color-bg: #090d16;
-    --color-surface: #111827;
-    --color-surface-hover: #1f2937;
-    --color-border: #374151;
-    --color-text: #f9fafb;
-    --color-text-muted: #9ca3af;
-    --color-primary: #3b82f6;
-    --color-primary-hover: #2563eb;
+    --color-bg: #faf8f5;
+    --color-surface: #ffffff;
+    --color-surface-soft: #f4f2eb;
+    --color-surface-hover: #ece8df;
+    --color-border: #ede8df;
+    --color-text: #0f172a;
+    --color-text-muted: #64748b;
+    --color-primary: #f97316;
+    --color-primary-hover: #ea580c;
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
   }
 
   body {
-    background-color: var(--color-bg);
-    color: var(--color-text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: #faf8f5;
+    background-image:
+      radial-gradient(at 0% 0%, rgba(254, 240, 225, 0.75) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(243, 232, 255, 0.5) 0px, transparent 40%),
+      radial-gradient(at 50% 45%, rgba(236, 253, 245, 0.35) 0px, transparent 55%),
+      radial-gradient(at 100% 100%, rgba(255, 237, 213, 0.5) 0px, transparent 50%);
+    background-attachment: fixed;
+    color: #0f172a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     overscroll-behavior-y: none;
+    min-height: 100vh;
   }
 
   input, textarea, select {
     user-select: text;
   }
 }
+
+/* Spring easing & Drag-Drop Interaction tokens */
+:root {
+  --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-gentle: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dropTargetGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4), 0 10px 25px -5px rgba(249, 115, 22, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 12px rgba(249, 115, 22, 0.15), 0 20px 35px -5px rgba(249, 115, 22, 0.45);
+  }
+}
+
+@keyframes dropRingRipple {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+}
+
+@keyframes documentLand {
+  0% {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.92);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(2px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes subtleIconFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-drop-glow {
+  animation: dropTargetGlow 2s infinite ease-in-out;
+}
+
+.animate-ring-ripple {
+  animation: dropRingRipple 2.4s infinite ease-in-out;
+}
+
+.animate-doc-landing {
+  animation: documentLand 350ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-icon-float {
+  animation: subtleIconFloat 1.8s ease-in-out infinite;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-drop-glow,
+  .animate-ring-ripple,
+  .animate-doc-landing,
+  .animate-icon-float {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+
+  .transition-spring {
+    transition: none !important;
+  }
+}
+

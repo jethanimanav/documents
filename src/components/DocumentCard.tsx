@@ -7,6 +7,8 @@ import {
   Tag,
   Check,
   ChevronDown,
+  ChevronRight,
+  Info,
 } from 'lucide-react';
 import type { DocItem, DocCategory } from '../types';
 import { formatFileSize, getFileExtension } from '../utils/folder';
@@ -18,6 +20,7 @@ interface DocumentCardProps {
   onTogglePin: (id: string) => void;
   onSelect?: (doc: DocItem) => void;
   onUpdateCategory: (id: string, category: DocCategory) => void;
+  onOpenDetails?: (doc: DocItem) => void;
 }
 
 export const DocumentCard: React.FC<DocumentCardProps> = ({
@@ -26,127 +29,256 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   onTogglePin,
   onSelect,
   onUpdateCategory,
+  onOpenDetails,
 }) => {
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const ext = getFileExtension(doc.name);
   const isPdf = ext === 'PDF';
 
   const categoryColors: Record<DocCategory, { bg: string; text: string; border: string }> = {
-    Identity: { bg: 'bg-emerald-950/70', text: 'text-emerald-300', border: 'border-emerald-800/80' },
-    Education: { bg: 'bg-sky-950/70', text: 'text-sky-300', border: 'border-sky-800/80' },
-    Financial: { bg: 'bg-amber-950/70', text: 'text-amber-300', border: 'border-amber-800/80' },
-    Insurance: { bg: 'bg-purple-950/70', text: 'text-purple-300', border: 'border-purple-800/80' },
-    Government: { bg: 'bg-rose-950/70', text: 'text-rose-300', border: 'border-rose-800/80' },
-    Medical: { bg: 'bg-teal-950/70', text: 'text-teal-300', border: 'border-teal-800/80' },
-    Other: { bg: 'bg-neutral-800/70', text: 'text-neutral-300', border: 'border-neutral-700/80' },
+    Identity: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200/80' },
+    Education: { bg: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200/80' },
+    Financial: { bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200/80' },
+    Insurance: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200/80' },
+    Government: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200/80' },
+    Medical: { bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200/80' },
+    Other: { bg: 'bg-neutral-100', text: 'text-neutral-700', border: 'border-neutral-200/80' },
   };
 
   const catStyle = categoryColors[doc.category] || categoryColors.Other;
 
+  const formatRelativeDate = (isoString?: string): string => {
+    if (!isoString) return '';
+    try {
+      const date = new Date(isoString);
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Yesterday';
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
+  const relativeDate = formatRelativeDate(doc.modifiedTime);
+  const [isDragging, setIsDragging] = useState(false);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click or Escape key
+  React.useEffect(() => {
+    if (!showCategoryMenu) return;
+
+    const handlePointerDown = (e: MouseEvent | PointerEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowCategoryMenu(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowCategoryMenu(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showCategoryMenu]);
+
   return (
     <div
-      onClick={() => onSelect?.(doc)}
-      className="group relative bg-neutral-900/90 hover:bg-neutral-850 border border-neutral-800 hover:border-neutral-700 rounded-xl p-3.5 sm:p-4 transition-all shadow-sm hover:shadow-md flex flex-col justify-between gap-3"
+      role="button"
+      tabIndex={0}
+      draggable={!showCategoryMenu}
+      onDragStart={(e) => {
+        if (showCategoryMenu) {
+          e.preventDefault();
+          return;
+        }
+        e.dataTransfer.setData('application/x-personal-doc-id', doc.id);
+        e.dataTransfer.setData('text/plain', doc.name);
+        e.dataTransfer.effectAllowed = 'copy';
+        setIsDragging(true);
+      }}
+      onDragEnd={() => setIsDragging(false)}
+      onClick={() => {
+        if (!showCategoryMenu) {
+          onSelect?.(doc);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!showCategoryMenu) {
+            onSelect?.(doc);
+          }
+        }
+      }}
+      className={`group relative bg-white hover:bg-neutral-50/70 border border-neutral-200/70 hover:border-neutral-300 rounded-2xl p-3.5 sm:p-4 transition-all shadow-[0_2px_8px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_20px_rgba(0,0,0,0.06)] flex flex-col justify-between gap-3 select-none ${
+        showCategoryMenu ? 'z-40 ring-1 ring-orange-400/40 shadow-md' : 'z-10'
+      } ${
+        isDragging
+          ? 'opacity-60 scale-102 shadow-2xl ring-2 ring-orange-400/80 -translate-y-2 rotate-1 cursor-grabbing z-30'
+          : showCategoryMenu
+          ? 'cursor-default'
+          : 'cursor-pointer hover:-translate-y-0.5'
+      }`}
     >
       <div className="flex items-start justify-between gap-2.5">
-        {/* File Type Icon & Title */}
+        {/* File Type Visual Icon & Title */}
         <div className="flex items-start gap-3 min-w-0 flex-1">
           <div
-            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+            className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
               isPdf
-                ? 'bg-red-950/50 border-red-800/60 text-red-400'
-                : 'bg-blue-950/50 border-blue-800/60 text-blue-400'
+                ? 'bg-rose-50 border-rose-100/90 text-rose-500'
+                : 'bg-sky-50 border-sky-100/90 text-sky-500'
             }`}
           >
-            {isPdf ? <FileText className="w-5 h-5" /> : <Image className="w-5 h-5" />}
+            {isPdf ? <FileText className="w-5 h-5 stroke-[2.2]" /> : <Image className="w-5 h-5 stroke-[2.2]" />}
           </div>
 
           <div className="min-w-0 flex-1">
-            <h3 className="font-semibold text-sm sm:text-base text-neutral-100 truncate leading-snug">
+            <h3 className="font-bold text-sm sm:text-base text-neutral-900 group-hover:text-orange-600 truncate leading-snug transition-colors">
               {doc.cleanTitle}
             </h3>
-            <p className="text-xs text-neutral-400 truncate font-mono mt-0.5">
-              {doc.name}
+            <p className="text-xs text-neutral-500 font-medium truncate mt-0.5">
+              {ext} &bull; {formatFileSize(doc.size)} {relativeDate ? `\u2022 ${relativeDate}` : ''}
             </p>
           </div>
         </div>
 
-        {/* Pin Button (min 44px tap target) */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onTogglePin(doc.id);
-          }}
-          className={`min-w-[44px] min-h-[44px] -mr-1 -mt-1 flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
-            isPinned
-              ? 'text-amber-400 hover:text-amber-300'
-              : 'text-neutral-500 hover:text-neutral-300'
-          }`}
-          title={isPinned ? 'Unpin' : 'Pin to top'}
-        >
-          <Pin className={`w-4 h-4 ${isPinned ? 'fill-amber-400' : ''}`} />
-        </button>
-      </div>
+        <div className="flex items-center gap-0.5 -mr-1 -mt-1">
+          {onOpenDetails && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenDetails(doc);
+              }}
+              aria-label={`View details and expiry for ${doc.cleanTitle}`}
+              className="min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] flex items-center justify-center rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
+              title="Details & Reminders"
+            >
+              <Info className="w-4 h-4" />
+            </button>
+          )}
 
-      {/* Metadata Badges: Size, Type, Folder Path */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        {/* Type & Size pill */}
-        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-950 border border-neutral-800 font-mono text-[11px] text-neutral-300">
-          <strong className="mr-1 text-neutral-100">{ext}</strong> &bull; {formatFileSize(doc.size)}
-        </span>
-
-        {/* Category Pill with Quick Override Dropdown */}
-        <div className="relative">
+          {/* Pin Button */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              setShowCategoryMenu((v) => !v);
+              onTogglePin(doc.id);
             }}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border cursor-pointer ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}
-            title="Click to override category"
+            aria-label={isPinned ? `Unpin ${doc.cleanTitle}` : `Pin ${doc.cleanTitle} to top`}
+            className={`min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] flex items-center justify-center rounded-xl transition-colors cursor-pointer ${
+              isPinned
+                ? 'text-amber-500 hover:text-amber-600 bg-amber-50'
+                : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
+            }`}
+            title={isPinned ? 'Unpin' : 'Pin to top'}
           >
-            <Tag className="w-3 h-3" />
-            <span>{doc.category}</span>
-            <ChevronDown className="w-2.5 h-2.5 opacity-70" />
+            <Pin className={`w-4 h-4 ${isPinned ? 'fill-amber-400 text-amber-500' : ''}`} />
           </button>
+        </div>
+      </div>
 
-          {showCategoryMenu && (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="absolute left-0 top-full mt-1 z-30 bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl p-1 w-36 text-xs animate-in fade-in duration-150"
+      {/* Footer Badges: Category Pill & Folder Path */}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1 border-t border-neutral-100">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {/* Category Pill with Quick Override Dropdown */}
+          <div
+            ref={dropdownRef}
+            className="relative"
+            draggable={false}
+            onDragStart={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              draggable={false}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowCategoryMenu((v: boolean) => !v);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              aria-label={`Category: ${doc.category}. Click to change.`}
+              aria-haspopup="true"
+              aria-expanded={showCategoryMenu}
+              className={`inline-flex items-center gap-1 min-h-[36px] sm:min-h-[26px] px-2.5 py-1 sm:py-0.5 rounded-full text-[11px] font-semibold border cursor-pointer select-none transition-colors ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}
+              title="Click to override category"
             >
-              <div className="px-2 py-1 text-[10px] uppercase font-semibold text-neutral-400 border-b border-neutral-800">
-                Set Category
+              <Tag className="w-2.5 h-2.5 opacity-80" />
+              <span>{doc.category}</span>
+              <ChevronDown className="w-2.5 h-2.5 opacity-70" />
+            </button>
+
+            {showCategoryMenu && (
+              <div
+                draggable={false}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="absolute left-0 bottom-full mb-1.5 sm:bottom-auto sm:top-full sm:mt-1.5 z-50 bg-white border border-neutral-200/90 rounded-2xl shadow-2xl p-1.5 w-44 max-w-[calc(100vw-2.5rem)] text-xs"
+                role="menu"
+                aria-label="Select category"
+              >
+                <div className="px-2 py-1 text-[10px] uppercase font-bold text-neutral-400 border-b border-neutral-100 select-none">
+                  Set Category
+                </div>
+                <div className="py-1 space-y-0.5 max-h-52 overflow-y-auto">
+                  {ALL_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      draggable={false}
+                      role="menuitem"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUpdateCategory(doc.id, cat);
+                        setShowCategoryMenu(false);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className={`w-full min-h-[42px] sm:min-h-[34px] text-left px-3 py-2 sm:py-1.5 rounded-xl flex items-center justify-between hover:bg-neutral-100 cursor-pointer text-xs transition-colors ${
+                        doc.category === cat ? 'font-bold text-orange-600 bg-orange-50/70' : 'text-neutral-700 font-medium'
+                      }`}
+                    >
+                      <span>{cat}</span>
+                      {doc.category === cat && <Check className="w-3.5 h-3.5 text-orange-600 stroke-[2.5]" />}
+                    </button>
+                  ))}
+                </div>
               </div>
-              {ALL_CATEGORIES.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => {
-                    onUpdateCategory(doc.id, cat);
-                    setShowCategoryMenu(false);
-                  }}
-                  className={`w-full text-left px-2 py-1.5 rounded flex items-center justify-between hover:bg-neutral-800 cursor-pointer text-xs ${
-                    doc.category === cat ? 'font-semibold text-blue-400' : 'text-neutral-300'
-                  }`}
-                >
-                  <span>{cat}</span>
-                  {doc.category === cat && <Check className="w-3 h-3 text-blue-400" />}
-                </button>
-              ))}
-            </div>
+            )}
+          </div>
+
+          {/* Folder Path */}
+          {doc.folderPath && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-neutral-400 truncate max-w-[150px] sm:max-w-[220px]">
+              <Folder className="w-3 h-3 shrink-0 text-neutral-400" />
+              <span className="truncate" title={doc.folderPath}>{doc.folderPath}</span>
+            </span>
           )}
         </div>
 
-        {/* Folder Path */}
-        {doc.folderPath && (
-          <span className="inline-flex items-center gap-1 text-[11px] text-neutral-400 truncate max-w-[200px] sm:max-w-[280px]">
-            <Folder className="w-3 h-3 shrink-0 text-neutral-500" />
-            <span className="truncate" title={doc.folderPath}>{doc.folderPath}</span>
-          </span>
-        )}
+        {/* Quick Open Indicator */}
+        <div className="flex items-center text-[11px] font-semibold text-neutral-400 group-hover:text-orange-600 transition-colors shrink-0">
+          <span className="hidden sm:inline mr-0.5">Open</span>
+          <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+        </div>
       </div>
     </div>
   );

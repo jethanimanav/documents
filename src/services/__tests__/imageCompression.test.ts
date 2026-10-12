@@ -228,4 +228,65 @@ describe('Image Compression Engine', () => {
       ).rejects.toThrow("This file type isn't supported for image compression yet");
     });
   });
+
+  describe('Candidate Quality Maximization Under Target Budget (Milestone 2)', () => {
+    it('chooses the higher-quality valid candidate over a smaller candidate when both satisfy target', async () => {
+      // 2000x1500 image with 3MB original
+      const originalImage = new Blob([new Uint8Array(3 * 1024 * 1024)], { type: 'image/jpeg' });
+      const targetBytes = 500 * 1024; // 500 KB target
+
+      const result = await compressImage({
+        file: originalImage,
+        targetBytes,
+      });
+
+      expect(result.achievedTarget).toBe(true);
+      expect(result.outputBytes).toBeLessThanOrEqual(targetBytes);
+      // Quality should not be minimized down to the 0.3 floor if higher quality fits
+      expect(result.quality).toBeGreaterThanOrEqual(0.5);
+      // Width should be preserved safely rather than drastically shrunken down to 200px floor
+      expect(result.width).toBeGreaterThanOrEqual(1000);
+    });
+  });
+
+  describe('Batch Image Compression (Milestone 2)', () => {
+    it('processes multiple images sequentially with progress tracking and safe filenames', async () => {
+      const { batchCompressImages } = await import('../imageCompression');
+
+      const items = [
+        { name: 'Photo1.jpg', file: new Blob([new Uint8Array(1024 * 1024)], { type: 'image/jpeg' }) },
+        { name: 'Photo2.png', file: new Blob([new Uint8Array(800 * 1024)], { type: 'image/png' }) },
+        { name: 'Invalid.xyz', file: new Blob([new Uint8Array(500)], { type: 'application/unknown' }) },
+      ];
+
+      const progressSteps: any[] = [];
+      const results = await batchCompressImages(
+        items,
+        { targetBytes: 300 * 1024 },
+        (p) => progressSteps.push({ ...p })
+      );
+
+      expect(results).toHaveLength(3);
+
+      // Item 1 succeeds
+      expect(results[0].name).toBe('Photo1.jpg');
+      expect(results[0].success).toBe(true);
+      expect(results[0].result?.achievedTarget).toBe(true);
+      expect(results[0].suggestedFilename).toBe('Photo1_300KB.jpg');
+
+      // Item 2 succeeds and converts png -> webp
+      expect(results[1].name).toBe('Photo2.png');
+      expect(results[1].success).toBe(true);
+      expect(results[1].suggestedFilename).toBe('Photo2_300KB.webp');
+
+      // Item 3 fails gracefully without breaking the batch
+      expect(results[2].name).toBe('Invalid.xyz');
+      expect(results[2].success).toBe(false);
+      expect(results[2].error).toBeDefined();
+
+      // Progress checks
+      expect(progressSteps.length).toBeGreaterThan(0);
+      expect(progressSteps[progressSteps.length - 1].overallPercent).toBe(100);
+    });
+  });
 });

@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { db, getSetting, setSetting, setCategoryOverride } from '../services/db';
-import { searchIndex } from '../services/searchIndex';
+import {
+  searchIndex,
+  type SortOption,
+  type FileTypeFilter,
+  type SizeRangeFilter,
+  type DateRangeFilter,
+  getRecentSearchHistory,
+  addRecentSearchQuery,
+  clearRecentSearchHistory,
+} from '../services/searchIndex';
 import { driveSync, type SyncProgress } from '../services/driveSync';
 import { useAuth } from './useAuth';
 import type { DocItem, DocCategory } from '../types';
@@ -8,11 +17,20 @@ import type { DocItem, DocCategory } from '../types';
 const SETTING_PINNED_IDS = 'pinned_doc_ids';
 const SETTING_RECENT_IDS = 'recent_doc_ids';
 
+export type SizeBracket = 'all' | 'under500kb' | '500kb-2mb' | '2mb-10mb' | 'over10mb';
+export type DatePreset = 'all' | 'last7days' | 'last30days' | 'last90days' | 'thisYear';
+
 export function useDocuments() {
   const { isAuthenticated } = useAuth();
   const [isLoaded, setIsLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocCategory | 'All'>('All');
+  const [fileTypeFilter, setFileTypeFilter] = useState<FileTypeFilter>('all');
+  const [sizeBracket, setSizeBracket] = useState<SizeBracket>('all');
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('default');
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+
   const [syncProgress, setSyncProgress] = useState<SyncProgress>(() => driveSync.getProgress());
   const [allDocs, setAllDocs] = useState<DocItem[]>([]);
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
@@ -27,6 +45,7 @@ export function useDocuments() {
         const cachedDocs = await db.docs.toArray();
         const storedPinned = await getSetting<string[]>(SETTING_PINNED_IDS, []);
         const storedRecent = await getSetting<string[]>(SETTING_RECENT_IDS, []);
+        const storedHistory = await getRecentSearchHistory();
 
         if (isMounted) {
           // Initialize in-memory MiniSearch index immediately
@@ -34,6 +53,7 @@ export function useDocuments() {
           setAllDocs(cachedDocs);
           setPinnedIds(storedPinned);
           setRecentIds(storedRecent);
+          setRecentSearches(storedHistory);
           setIsLoaded(true);
         }
       } catch (err) {
@@ -71,10 +91,93 @@ export function useDocuments() {
     }
   }, [isLoaded, isAuthenticated]);
 
-  // Instant in-memory search results
+  // Map sizeBracket to SizeRangeFilter
+  const resolvedSizeRange = useMemo<SizeRangeFilter | undefined>(() => {
+    switch (sizeBracket) {
+      case 'under500kb':
+        return { maxBytes: 500 * 1024 };
+      case '500kb-2mb':
+        return { minBytes: 500 * 1024, maxBytes: 2 * 1024 * 1024 };
+      case '2mb-10mb':
+        return { minBytes: 2 * 1024 * 1024, maxBytes: 10 * 1024 * 1024 };
+      case 'over10mb':
+        return { minBytes: 10 * 1024 * 1024 };
+      default:
+        return undefined;
+    }
+  }, [sizeBracket]);
+
+  // Map datePreset to DateRangeFilter
+  const resolvedDateRange = useMemo<DateRangeFilter | undefined>(() => {
+    if (datePreset === 'all') return undefined;
+    const now = new Date();
+    let startDate: string | undefined;
+
+    if (datePreset === 'last7days') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      startDate = d.toISOString().split('T')[0];
+    } else if (datePreset === 'last30days') {
+      const d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      startDate = d.toISOString().split('T')[0];
+    } else if (datePreset === 'last90days') {
+      const d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      startDate = d.toISOString().split('T')[0];
+    } else if (datePreset === 'thisYear') {
+      startDate = `${now.getFullYear()}-01-01`;
+    }
+
+    return startDate ? { startDate } : undefined;
+  }, [datePreset]);
+
+  // Multi-filter search results
   const filteredDocs = useMemo(() => {
-    return searchIndex.search(searchQuery, selectedCategory);
-  }, [searchQuery, selectedCategory, allDocs]);
+    return searchIndex.searchAdvanced({
+      query: searchQuery,
+      category: selectedCategory,
+      fileType: fileTypeFilter,
+      sizeRange: resolvedSizeRange,
+      dateRange: resolvedDateRange,
+      sortBy,
+    });
+  }, [
+    searchQuery,
+    selectedCategory,
+    fileTypeFilter,
+    resolvedSizeRange,
+    resolvedDateRange,
+    sortBy,
+    allDocs,
+  ]);
+
+  const hasActiveFilters = useMemo(() => {
+    return (
+      searchQuery.trim().length > 0 ||
+      selectedCategory !== 'All' ||
+      fileTypeFilter !== 'all' ||
+      sizeBracket !== 'all' ||
+      datePreset !== 'all' ||
+      sortBy !== 'default'
+    );
+  }, [searchQuery, selectedCategory, fileTypeFilter, sizeBracket, datePreset, sortBy]);
+
+  const resetFilters = useCallback(() => {
+    setSearchQuery('');
+    setSelectedCategory('All');
+    setFileTypeFilter('all');
+    setSizeBracket('all');
+    setDatePreset('all');
+    setSortBy('default');
+  }, []);
+
+  const saveSearchQuery = useCallback(async (query: string) => {
+    const updated = await addRecentSearchQuery(query);
+    setRecentSearches(updated);
+  }, []);
+
+  const clearHistory = useCallback(async () => {
+    await clearRecentSearchHistory();
+    setRecentSearches([]);
+  }, []);
 
   // Pinned items
   const pinnedDocs = useMemo(() => {
@@ -137,6 +240,19 @@ export function useDocuments() {
     setSearchQuery,
     selectedCategory,
     setSelectedCategory,
+    fileTypeFilter,
+    setFileTypeFilter,
+    sizeBracket,
+    setSizeBracket,
+    datePreset,
+    setDatePreset,
+    sortBy,
+    setSortBy,
+    hasActiveFilters,
+    resetFilters,
+    recentSearches,
+    saveSearchQuery,
+    clearHistory,
     syncProgress,
     triggerSync,
     togglePin,

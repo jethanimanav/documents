@@ -10,26 +10,40 @@ import {
   Sliders,
   Shield,
   FileText,
+  Layers,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import type { DocItem } from '../types';
-import type { ImageCompressionResult } from '../types/compression';
+import type {
+  ImageCompressionResult,
+  BatchCompressionProgress,
+  BatchItemResult,
+  BatchImageItem,
+} from '../types/compression';
 import { DEFAULT_IMAGE_PRESETS } from '../types/compression';
-import { compressImage } from '../services/imageCompression';
+import { compressImage, batchCompressImages } from '../services/imageCompression';
 import { driveFetch } from '../services/driveFetch';
+import { db } from '../services/db';
 import { formatFileSize } from '../utils/folder';
 import { generateOutputFilename } from '../utils/filename';
+import { useAuth } from '../hooks/useAuth';
 
 interface ImageCompressModalProps {
   doc: DocItem | null;
   isOpen: boolean;
   onClose: () => void;
+  cachedBlob?: Blob | null;
 }
 
 export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
   doc,
   isOpen,
   onClose,
+  cachedBlob,
 }) => {
+  const { needsReconnect, reconnect } = useAuth();
+  const [reloadKey, setReloadKey] = useState(0);
   const [originalBlob, setOriginalBlob] = useState<Blob | null>(null);
   const [originalPreviewUrl, setOriginalPreviewUrl] = useState<string | null>(null);
   const [isLoadingOriginal, setIsLoadingOriginal] = useState(false);
@@ -50,7 +64,111 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
   // Sharing capability
   const [canShareFile, setCanShareFile] = useState(false);
 
+  // Batch compression state
+  const [compressionMode, setCompressionMode] = useState<'single' | 'batch'>('single');
+  const [availableImages, setAvailableImages] = useState<DocItem[]>([]);
+  const [selectedBatchDocIds, setSelectedBatchDocIds] = useState<string[]>([]);
+  const [batchProgress, setBatchProgress] = useState<BatchCompressionProgress | null>(null);
+  const [batchResults, setBatchResults] = useState<BatchItemResult[] | null>(null);
+  const [isBatchRunning, setIsBatchRunning] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+
   const activeBlobUrlRef = useRef<string | null>(null);
+
+  // Load indexed images from database for batch operations
+  useEffect(() => {
+    if (isOpen) {
+      db.docs.toArray().then((docs) => {
+        const images = docs.filter(
+          (d) =>
+            d.mimeType.startsWith('image/') ||
+            /\.(jpe?g|png|webp|bmp|gif)$/i.test(d.name)
+        );
+        setAvailableImages(images);
+        if (doc && !selectedBatchDocIds.includes(doc.id)) {
+          setSelectedBatchDocIds([doc.id]);
+        }
+      });
+    } else {
+      setBatchResults(null);
+      setBatchProgress(null);
+      setIsBatchRunning(false);
+      setBatchError(null);
+    }
+  }, [isOpen, doc]);
+
+  const handleRunBatch = async () => {
+    if (selectedBatchDocIds.length === 0) return;
+    setIsBatchRunning(true);
+    setBatchError(null);
+    setBatchResults(null);
+
+    try {
+      const selectedDocs = availableImages.filter((d) => selectedBatchDocIds.includes(d.id));
+      const itemsToProcess: BatchImageItem[] = [];
+
+      for (const d of selectedDocs) {
+        setBatchProgress({
+          currentIndex: itemsToProcess.length + 1,
+          totalFiles: selectedDocs.length,
+          currentFilename: d.name,
+          currentFilePercent: 0,
+          overallPercent: Math.round((itemsToProcess.length / selectedDocs.length) * 100),
+          stage: `Fetching ${d.name} from Drive...`,
+        });
+
+        let fileBlob: Blob;
+        if (d.id === doc?.id && originalBlob) {
+          fileBlob = originalBlob;
+        } else {
+          const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${d.id}?alt=media`);
+          if (!res.ok) {
+            throw new Error(`Failed to download ${d.name} from Google Drive (HTTP ${res.status})`);
+          }
+          fileBlob = await res.blob();
+        }
+
+        itemsToProcess.push({
+          id: d.id,
+          name: d.name,
+          file: fileBlob,
+        });
+      }
+
+      const results = await batchCompressImages(
+        itemsToProcess,
+        { targetBytes },
+        (progress) => setBatchProgress(progress)
+      );
+
+      setBatchResults(results);
+    } catch (err: any) {
+      setBatchError(err?.message || 'Batch compression encountered an error.');
+    } finally {
+      setIsBatchRunning(false);
+    }
+  };
+
+  const handleDownloadBatchItem = (item: BatchItemResult) => {
+    if (!item.result?.blob) return;
+    const url = URL.createObjectURL(item.result.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = item.suggestedFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleDownloadAllBatch = () => {
+    if (!batchResults) return;
+    batchResults.forEach((item, idx) => {
+      if (item.success && item.result?.blob) {
+        setTimeout(() => handleDownloadBatchItem(item), idx * 250);
+      }
+    });
+  };
 
   // Update targetBytes when preset or custom input changes
   useEffect(() => {
@@ -94,15 +212,18 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
 
     async function loadDriveImage() {
       try {
-        const res = await driveFetch(
-          `https://www.googleapis.com/drive/v3/files/${doc!.id}?alt=media`
-        );
-        if (!res.ok) {
-          throw new Error(
-            `Failed to download file from Google Drive (HTTP ${res.status}: ${res.statusText})`
+        let blob = cachedBlob;
+        if (!blob) {
+          const res = await driveFetch(
+            `https://www.googleapis.com/drive/v3/files/${doc!.id}?alt=media`
           );
+          if (!res.ok) {
+            throw new Error(
+              `Failed to download file from Google Drive (HTTP ${res.status}: ${res.statusText})`
+            );
+          }
+          blob = await res.blob();
         }
-        const blob = await res.blob();
         if (!isCancelled) {
           setOriginalBlob(blob);
           const url = URL.createObjectURL(blob);
@@ -112,8 +233,10 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
       } catch (err: any) {
         if (!isCancelled) {
           setDownloadError(
-            err.message ||
-              "Couldn't download this file from Google Drive. Check your connection and try again."
+            !navigator.onLine
+              ? "You're offline. Original image cannot be downloaded from Google Drive until you are reconnected to the internet."
+              : err.message ||
+                "Couldn't download this file from Google Drive. Check your connection and try again."
           );
         }
       } finally {
@@ -131,7 +254,28 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
         URL.revokeObjectURL(activeBlobUrlRef.current);
       }
     };
-  }, [isOpen, doc]);
+  }, [isOpen, doc, reloadKey]);
+
+  // Keyboard dismissal via Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  // When re-authentication completes, automatically reload the image if not loaded yet
+  const prevNeedsReconnectRef = useRef(needsReconnect);
+  useEffect(() => {
+    if (prevNeedsReconnectRef.current && !needsReconnect && isOpen && doc && !originalBlob && !isLoadingOriginal) {
+      setReloadKey((k) => k + 1);
+    }
+    prevNeedsReconnectRef.current = needsReconnect;
+  }, [needsReconnect, isOpen, doc, originalBlob, isLoadingOriginal]);
 
   // Check Web Share API capability
   useEffect(() => {
@@ -215,13 +359,18 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="image-compress-title"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] pl-[max(0.75rem,env(safe-area-inset-left,0px))] pr-[max(0.75rem,env(safe-area-inset-right,0px))]"
+    >
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-150">
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-neutral-800 flex items-center justify-between">
           <div className="min-w-0 flex-1 pr-3">
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white truncate">{doc.cleanTitle}</h2>
+              <h2 id="image-compress-title" className="text-base font-bold text-white truncate">{doc.cleanTitle}</h2>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300 shrink-0">
                 {doc.name.split('.').pop()?.toUpperCase()}
               </span>
@@ -231,6 +380,7 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close dialog"
             className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-800 cursor-pointer transition-colors"
           >
             <X className="w-5 h-5" />
@@ -261,7 +411,279 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
             </div>
           ) : (
             <>
-              {/* Drive Download Loader / Error */}
+              {/* Session Reconnect Needed */}
+              {needsReconnect && (
+                <div className="p-4 bg-amber-950/60 border border-amber-800 rounded-xl text-xs text-amber-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>Google Drive session needs reconnect. Reconnect to download or process this file.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={reconnect}
+                    className="min-h-[36px] px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-black font-semibold rounded-lg text-xs flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Reconnect Google
+                  </button>
+                </div>
+              )}
+
+              {/* Mode Switch: Single Image vs Batch */}
+              {availableImages.length > 1 && (
+                <div className="flex items-center gap-2 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => setCompressionMode('single')}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                      compressionMode === 'single'
+                        ? 'bg-neutral-800 text-white shadow-xs'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    Single Image
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCompressionMode('batch')}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                      compressionMode === 'batch'
+                        ? 'bg-neutral-800 text-white shadow-xs'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-blue-400" />
+                      Batch Images ({availableImages.length})
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {compressionMode === 'batch' ? (
+                <div className="space-y-5">
+                  {/* Shared Target Size Selector */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
+                        <Sliders className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Shared Target Size for All Images</span>
+                      </label>
+                      <span className="text-xs font-mono text-blue-400 font-semibold">
+                        Max: {formatFileSize(targetBytes)}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                      {DEFAULT_IMAGE_PRESETS.map((p) => {
+                        const isSelected = selectedPresetId === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setSelectedPresetId(p.id)}
+                            disabled={isBatchRunning}
+                            className={`min-h-[38px] px-2 py-1.5 rounded-xl text-xs font-semibold border cursor-pointer transition-all ${
+                              isSelected
+                                ? 'bg-blue-600 border-blue-500 text-white shadow-md'
+                                : 'bg-neutral-950 hover:bg-neutral-900 border-neutral-800 text-neutral-300'
+                            }`}
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {batchError && (
+                    <div className="p-3.5 bg-red-950/40 border border-red-800 rounded-xl text-xs text-red-300">
+                      {batchError}
+                    </div>
+                  )}
+
+                  {/* Batch Running State */}
+                  {isBatchRunning && batchProgress && (
+                    <div className="p-6 bg-neutral-950 rounded-2xl border border-neutral-800 text-center space-y-4">
+                      <RefreshCw className="w-7 h-7 animate-spin text-blue-400 mx-auto" />
+                      <div className="space-y-1">
+                        <p className="text-sm font-bold text-white">
+                          Processing Image {batchProgress.currentIndex} of {batchProgress.totalFiles}
+                        </p>
+                        <p className="text-xs text-neutral-400 truncate max-w-sm mx-auto">
+                          {batchProgress.currentFilename}
+                        </p>
+                        <p className="text-[11px] text-blue-400 font-medium">
+                          {batchProgress.stage}
+                        </p>
+                      </div>
+
+                      {/* Overall Progress Bar */}
+                      <div className="w-full bg-neutral-900 rounded-full h-2.5 overflow-hidden border border-neutral-800">
+                        <div
+                          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                          style={{ width: `${batchProgress.overallPercent}%` }}
+                        />
+                      </div>
+                      <p className="text-[11px] font-mono text-neutral-500">
+                        {batchProgress.overallPercent}% Overall &bull; Memory-Safe Sequential Processing
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Batch Results State */}
+                  {!isBatchRunning && batchResults && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between pb-2 border-b border-neutral-800">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          <h3 className="text-sm font-bold text-white">
+                            Batch Results ({batchResults.filter((r) => r.success).length}/{batchResults.length} Successful)
+                          </h3>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBatchResults(null)}
+                          className="text-xs text-neutral-400 hover:text-white underline cursor-pointer"
+                        >
+                          Select different images
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                        {batchResults.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3 bg-neutral-950 border border-neutral-800 rounded-xl flex items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold text-neutral-200 truncate">{item.name}</p>
+                              {item.success && item.result ? (
+                                <p className="text-[11px] text-neutral-400 mt-0.5">
+                                  <span className="line-through mr-1.5">{formatFileSize(item.result.originalBytes)}</span>
+                                  <span className={item.result.achievedTarget ? 'text-emerald-400 font-semibold' : 'text-amber-400'}>
+                                    {formatFileSize(item.result.outputBytes)}
+                                  </span>
+                                  <span className="ml-1.5 text-neutral-500 font-mono">(-{item.result.reductionPercentage}%)</span>
+                                </p>
+                              ) : (
+                                <p className="text-[11px] text-red-400 mt-0.5">{item.error || 'Failed'}</p>
+                              )}
+                            </div>
+
+                            {item.success && item.result && (
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadBatchItem(item)}
+                                className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Download</span>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-2 flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleDownloadAllBatch}
+                          className="flex-1 min-h-[44px] px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-lg"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>Download All Files</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onClose}
+                          className="min-h-[44px] px-5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl font-semibold text-sm cursor-pointer transition-colors"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Batch Selection State */}
+                  {!isBatchRunning && !batchResults && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-xs text-neutral-400">
+                        <span>Select images to compress together:</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBatchDocIds(availableImages.map((d) => d.id))}
+                            className="text-blue-400 hover:text-blue-300 cursor-pointer"
+                          >
+                            Select all
+                          </button>
+                          <span>&bull;</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBatchDocIds([])}
+                            className="text-neutral-400 hover:text-neutral-200 cursor-pointer"
+                          >
+                            Deselect all
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                        {availableImages.map((imgDoc) => {
+                          const isChecked = selectedBatchDocIds.includes(imgDoc.id);
+                          return (
+                            <button
+                              key={imgDoc.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedBatchDocIds((prev) =>
+                                  prev.includes(imgDoc.id)
+                                    ? prev.filter((id) => id !== imgDoc.id)
+                                    : [...prev, imgDoc.id]
+                                );
+                              }}
+                              className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                                isChecked
+                                  ? 'bg-blue-950/30 border-blue-800/80 text-white'
+                                  : 'bg-neutral-950 border-neutral-800/60 text-neutral-400 hover:bg-neutral-900'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                {isChecked ? (
+                                  <CheckSquare className="w-4 h-4 text-blue-400 shrink-0" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-neutral-600 shrink-0" />
+                                )}
+                                <span className="text-xs font-medium truncate">{imgDoc.name}</span>
+                              </div>
+                              <span className="text-[11px] font-mono text-neutral-500 shrink-0">
+                                {formatFileSize(imgDoc.size)}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={handleRunBatch}
+                          disabled={selectedBatchDocIds.length === 0}
+                          className="w-full min-h-[46px] px-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-colors disabled:cursor-not-allowed"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          <span>
+                            Compress {selectedBatchDocIds.length} {selectedBatchDocIds.length === 1 ? 'Image' : 'Images'} to {formatFileSize(targetBytes)}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {/* Drive Download Loader / Error */}
               {isLoadingOriginal && (
                 <div className="p-6 bg-neutral-950 rounded-2xl border border-neutral-800 text-center space-y-3">
                   <RefreshCw className="w-6 h-6 animate-spin text-blue-400 mx-auto" />
@@ -275,12 +697,21 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
               )}
 
               {downloadError && (
-                <div className="p-4 bg-red-950/40 border border-red-800 rounded-xl text-xs text-red-300 flex items-start gap-2.5">
-                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="font-semibold">Download Failed</p>
-                    <p>{downloadError}</p>
+                <div className="p-4 bg-red-950/40 border border-red-800 rounded-xl text-xs text-red-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-semibold">Download Failed</p>
+                      <p>{downloadError}</p>
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setReloadKey((k) => k + 1)}
+                    className="min-h-[36px] px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-medium cursor-pointer shrink-0 transition-colors"
+                  >
+                    Retry Download
+                  </button>
                 </div>
               )}
 
@@ -371,9 +802,11 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
                   {/* Custom Target Input */}
                   {selectedPresetId === 'custom' && (
                     <div className="bg-neutral-950 p-3.5 rounded-xl border border-neutral-800 space-y-2">
-                      <label className="text-xs text-neutral-300 font-medium">Custom Target Size (KB)</label>
+                      <label htmlFor="image-custom-target-kb" className="text-xs text-neutral-300 font-medium">Custom Target Size (KB)</label>
                       <div className="flex items-center gap-2">
                         <input
+                          id="image-custom-target-kb"
+                          aria-label="Custom target size in kilobytes"
                           type="number"
                           min="10"
                           max="20000"
@@ -549,6 +982,8 @@ export const ImageCompressModal: React.FC<ImageCompressModalProps> = ({
                     )}
                   </div>
                 </div>
+              )}
+                </>
               )}
             </>
           )}

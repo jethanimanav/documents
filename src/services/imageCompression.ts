@@ -1,4 +1,11 @@
-import type { ImageCompressionOptions, ImageCompressionResult } from '../types/compression';
+import type {
+  ImageCompressionOptions,
+  ImageCompressionResult,
+  BatchImageItem,
+  BatchItemResult,
+  BatchCompressionProgress,
+} from '../types/compression';
+import { generateOutputFilename } from '../utils/filename';
 
 const MAX_SAFE_CANVAS_PIXELS = 12_000_000; // ~12M pixels, safe limit for mobile/iOS
 const MIN_DIMENSION_FLOOR = 200; // Minimum width/height to maintain text readability
@@ -192,10 +199,18 @@ export async function compressImage(
 
     let currentScale = initialScale;
     let iterations = 0;
-    let bestBlob: Blob | null = null;
-    let bestQuality = maxQuality;
-    let bestWidth = Math.round(origWidth * currentScale);
-    let bestHeight = Math.round(origHeight * currentScale);
+    let bestValidCandidate: {
+      blob: Blob;
+      quality: number;
+      width: number;
+      height: number;
+    } | null = null;
+    let bestFallbackCandidate: {
+      blob: Blob;
+      quality: number;
+      width: number;
+      height: number;
+    } | null = null;
 
     // 5. Search Loop (Dimension ladder crossed with binary-searched quality)
     while (iterations < MAX_TOTAL_ITERATIONS) {
@@ -246,8 +261,6 @@ export async function compressImage(
       // Binary search quality at this dimension
       let qLow = minQuality;
       let qHigh = maxQuality;
-      let qBestAtDim: number = minQuality;
-      let blobBestAtDim: Blob | null = null;
 
       for (let qStep = 0; qStep < 4; qStep++) {
         iterations++;
@@ -257,22 +270,47 @@ export async function compressImage(
         const encoded = await canvasToBlob(canvas, outputMime, testQuality);
 
         if (encoded.size <= targetBytes) {
-          // Output satisfies target
-          blobBestAtDim = encoded;
-          qBestAtDim = testQuality;
-          // Try higher quality to see if we can get better fidelity within budget
+          // Output satisfies target: valid candidate
+          if (!bestValidCandidate) {
+            bestValidCandidate = {
+              blob: encoded,
+              quality: testQuality,
+              width: currentWidth,
+              height: currentHeight,
+            };
+          } else {
+            // Quality score = total pixels * quality. Higher quality wins, never smaller solely for being smaller.
+            const currScore = currentWidth * currentHeight * testQuality;
+            const prevScore =
+              bestValidCandidate.width *
+              bestValidCandidate.height *
+              bestValidCandidate.quality;
+            if (
+              currScore > prevScore ||
+              (currScore === prevScore && encoded.size > bestValidCandidate.blob.size)
+            ) {
+              bestValidCandidate = {
+                blob: encoded,
+                quality: testQuality,
+                width: currentWidth,
+                height: currentHeight,
+              };
+            }
+          }
+          // Try higher quality at this dimension to maximize quality within target
           qLow = testQuality + 0.05;
         } else {
           // Too large, decrease quality
           qHigh = testQuality - 0.05;
-        }
-
-        // Keep track of the globally smallest/best result
-        if (!bestBlob || encoded.size < bestBlob.size || (blobBestAtDim && blobBestAtDim.size <= targetBytes)) {
-          bestBlob = blobBestAtDim || encoded;
-          bestQuality = qBestAtDim;
-          bestWidth = currentWidth;
-          bestHeight = currentHeight;
+          // Keep best fallback (closest to target without falling below floor)
+          if (!bestFallbackCandidate || encoded.size < bestFallbackCandidate.blob.size) {
+            bestFallbackCandidate = {
+              blob: encoded,
+              quality: testQuality,
+              width: currentWidth,
+              height: currentHeight,
+            };
+          }
         }
 
         if (qLow > qHigh) break;
@@ -282,12 +320,8 @@ export async function compressImage(
       canvas.width = 0;
       canvas.height = 0;
 
-      // If we found a blob that hits the target, stop search
-      if (blobBestAtDim && blobBestAtDim.size <= targetBytes) {
-        bestBlob = blobBestAtDim;
-        bestQuality = qBestAtDim;
-        bestWidth = currentWidth;
-        bestHeight = currentHeight;
+      // If we found a valid candidate at this dimension (highest feasible resolution), stop search
+      if (bestValidCandidate && bestValidCandidate.width === currentWidth) {
         break;
       }
 
@@ -301,25 +335,26 @@ export async function compressImage(
       currentScale *= 0.82;
     }
 
-    if (!bestBlob) {
+    const chosen = bestValidCandidate || bestFallbackCandidate;
+    if (!chosen) {
       throw new Error("We couldn't prepare this image. Your original file is unchanged.");
     }
 
-    const finalSize = bestBlob.size;
+    const finalSize = chosen.blob.size;
     const achievedTarget = finalSize <= targetBytes;
     const reductionPercentage = Math.max(0, Math.round(((origSize - finalSize) / origSize) * 100));
 
     progressCallback?.('Finalizing...', 100);
 
     return {
-      blob: bestBlob,
+      blob: chosen.blob,
       originalBytes: origSize,
       outputBytes: finalSize,
       mimeType: outputMime,
-      width: bestWidth,
-      height: bestHeight,
-      quality: Math.round(bestQuality * 100) / 100,
-      scale: Math.round((bestWidth / origWidth) * 100) / 100,
+      width: chosen.width,
+      height: chosen.height,
+      quality: Math.round(chosen.quality * 100) / 100,
+      scale: Math.round((chosen.width / origWidth) * 100) / 100,
       achievedTarget,
       iterations,
       formatConverted,
@@ -331,4 +366,85 @@ export async function compressImage(
   } finally {
     decoded.close();
   }
+}
+
+/**
+ * Batches compression across multiple images sequentially to protect memory.
+ * Preserves individual errors without terminating the entire batch.
+ */
+export async function batchCompressImages(
+  items: BatchImageItem[],
+  options: Omit<ImageCompressionOptions, 'file'>,
+  onProgress?: (progress: BatchCompressionProgress) => void
+): Promise<BatchItemResult[]> {
+  if (!items || items.length === 0) {
+    return [];
+  }
+
+  const results: BatchItemResult[] = [];
+  const total = items.length;
+
+  for (let i = 0; i < total; i++) {
+    const item = items[i];
+    onProgress?.({
+      currentIndex: i + 1,
+      totalFiles: total,
+      currentFilename: item.name,
+      currentFilePercent: 0,
+      overallPercent: Math.round((i / total) * 100),
+      stage: `Starting ${item.name}...`,
+    });
+
+    try {
+      const res = await compressImage({
+        ...options,
+        file: item.file,
+        progressCallback: (stage, percent = 0) => {
+          const overall = Math.round(((i + percent / 100) / total) * 100);
+          onProgress?.({
+            currentIndex: i + 1,
+            totalFiles: total,
+            currentFilename: item.name,
+            currentFilePercent: percent,
+            overallPercent: overall,
+            stage,
+          });
+        },
+      });
+
+      const suggestedFilename = generateOutputFilename(
+        item.name,
+        options.targetBytes,
+        res.mimeType
+      );
+
+      results.push({
+        name: item.name,
+        success: true,
+        result: res,
+        suggestedFilename,
+      });
+    } catch (err: any) {
+      results.push({
+        name: item.name,
+        success: false,
+        error: err?.message || 'Failed to compress image.',
+        suggestedFilename: generateOutputFilename(item.name, options.targetBytes),
+      });
+    }
+
+    onProgress?.({
+      currentIndex: i + 1,
+      totalFiles: total,
+      currentFilename: item.name,
+      currentFilePercent: 100,
+      overallPercent: Math.round(((i + 1) / total) * 100),
+      stage: `Finished ${item.name}`,
+    });
+
+    // Yield briefly to garbage collector and main thread between files
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  return results;
 }

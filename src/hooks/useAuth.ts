@@ -12,12 +12,12 @@ export function useAuth() {
     return unsubscribe;
   }, []);
 
-  const signIn = useCallback(() => {
-    authService.requestToken();
+  const signIn = useCallback(async () => {
+    await authService.requestToken();
   }, []);
 
-  const reconnect = useCallback(() => {
-    authService.requestToken();
+  const reconnect = useCallback(async () => {
+    await authService.requestToken();
   }, []);
 
   const setClientId = useCallback(async (clientId: string) => {

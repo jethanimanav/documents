@@ -66,3 +66,41 @@ export function generateOutputFilename(
 
   return `${baseName}_${targetLabel}.${finalExt}`;
 }
+
+/**
+ * Generates an appropriate merged PDF output filename.
+ * E.g., "passport.pdf" -> "passport-merged.pdf"
+ * If no name provided -> "merged-document.pdf"
+ */
+export function generateMergedFilename(firstDocName?: string): string {
+  if (!firstDocName) return 'merged-document.pdf';
+  const lastDotIdx = firstDocName.lastIndexOf('.');
+  const baseName = lastDotIdx > 0 ? firstDocName.slice(0, lastDotIdx) : firstDocName;
+  return `${baseName}-merged.pdf`;
+}
+
+/**
+ * Generates an appropriate output filename for page tools (extract, modify).
+ */
+export function generatePageToolFilename(
+  originalName: string,
+  action: 'extracted' | 'modified' | 'rotated' = 'modified'
+): string {
+  if (!originalName) return `document-${action}.pdf`;
+  const lastDotIdx = originalName.lastIndexOf('.');
+  const baseName = lastDotIdx > 0 ? originalName.slice(0, lastDotIdx) : originalName;
+  return `${baseName}-${action}.pdf`;
+}
+
+/**
+ * Generates an appropriate output filename for image-to-PDF conversions.
+ * E.g., "receipt.jpg" -> "receipt-combined.pdf"
+ * If no name provided -> "images-combined.pdf"
+ */
+export function generateImagesToPdfFilename(firstImageName?: string): string {
+  if (!firstImageName) return 'images-combined.pdf';
+  const lastDotIdx = firstImageName.lastIndexOf('.');
+  const baseName = lastDotIdx > 0 ? firstImageName.slice(0, lastDotIdx) : firstImageName;
+  return `${baseName}-combined.pdf`;
+}
+

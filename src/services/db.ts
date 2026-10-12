@@ -22,12 +22,23 @@ export interface FolderRecord {
   path: string;
 }
 
+export interface DocumentDetailRecord {
+  fileId: string; // Drive file ID primary key
+  notes?: string;
+  labels?: string[]; // tags e.g. ["Official", "KYC", "Urgent"]
+  expiryDate?: string; // YYYY-MM-DD
+  reminderLeadDays?: number; // e.g. 7, 15, 30
+  isDismissed?: boolean; // user dismissed notification
+  updatedAt: number;
+}
+
 export class AppDatabase extends Dexie {
   docs!: EntityTable<DocItem, 'id'>;
   categoryOverrides!: EntityTable<CategoryOverride, 'fileId'>;
   folders!: EntityTable<FolderRecord, 'id'>;
   settings!: EntityTable<SettingRecord, 'key'>;
   preparedFiles!: EntityTable<PreparedRecord, 'id'>;
+  documentDetails!: EntityTable<DocumentDetailRecord, 'fileId'>;
 
   constructor() {
     super('PersonalDocsDB');
@@ -37,6 +48,9 @@ export class AppDatabase extends Dexie {
       folders: 'id, parentId, name, path',
       settings: 'key',
       preparedFiles: 'id, originalId, createdAt',
+    });
+    this.version(3).stores({
+      documentDetails: 'fileId, expiryDate, updatedAt',
     });
   }
 }
@@ -89,16 +103,102 @@ export async function deleteDocs(ids: string[]): Promise<void> {
   await db.docs.bulkDelete(ids);
 }
 
+// Document details & expiry metadata helpers (Milestone 3)
+export async function getDocumentDetails(fileId: string): Promise<DocumentDetailRecord | undefined> {
+  try {
+    return await db.documentDetails.get(fileId);
+  } catch (err) {
+    console.error(`Error loading document details for ${fileId}:`, err);
+    return undefined;
+  }
+}
+
+export async function saveDocumentDetails(details: DocumentDetailRecord): Promise<void> {
+  try {
+    await db.documentDetails.put(details);
+  } catch (err) {
+    console.error(`Error saving document details for ${details.fileId}:`, err);
+  }
+}
+
+export async function deleteDocumentDetails(fileId: string): Promise<void> {
+  try {
+    await db.documentDetails.delete(fileId);
+  } catch (err) {
+    console.error(`Error deleting document details for ${fileId}:`, err);
+  }
+}
+
+export async function getAllDocumentDetails(): Promise<DocumentDetailRecord[]> {
+  try {
+    return await db.documentDetails.toArray();
+  } catch (err) {
+    console.error('Error loading all document details:', err);
+    return [];
+  }
+}
+
 export async function wipeAllLocalData(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.docs, db.categoryOverrides, db.folders, db.settings, db.preparedFiles],
+    [db.docs, db.categoryOverrides, db.folders, db.settings, db.preparedFiles, db.documentDetails],
     async () => {
       await db.docs.clear();
       await db.categoryOverrides.clear();
       await db.folders.clear();
       await db.settings.clear();
       await db.preparedFiles.clear();
+      await db.documentDetails.clear();
     }
   );
 }
+
+export interface CacheMetadataStats {
+  docCount: number;
+  folderCount: number;
+  detailsCount: number;
+  estimatedSizeBytes: number;
+}
+
+export async function getCacheMetadataStats(): Promise<CacheMetadataStats> {
+  try {
+    const [docs, folders, details] = await Promise.all([
+      db.docs.toArray(),
+      db.folders.toArray(),
+      db.documentDetails.toArray(),
+    ]);
+
+    const docCount = docs.length;
+    const folderCount = folders.length;
+    const detailsCount = details.length;
+
+    const totalJson = JSON.stringify(docs) + JSON.stringify(folders) + JSON.stringify(details);
+    const estimatedSizeBytes = new Blob([totalJson]).size;
+
+    return {
+      docCount,
+      folderCount,
+      detailsCount,
+      estimatedSizeBytes,
+    };
+  } catch (err) {
+    console.error('Failed to calculate cache metadata stats:', err);
+    return {
+      docCount: 0,
+      folderCount: 0,
+      detailsCount: 0,
+      estimatedSizeBytes: 0,
+    };
+  }
+}
+
+export async function wipeMetadataCacheOnly(): Promise<void> {
+  await db.transaction('rw', [db.docs, db.folders, db.preparedFiles], async () => {
+    await db.docs.clear();
+    await db.folders.clear();
+    await db.preparedFiles.clear();
+  });
+  await db.settings.delete('drive_changes_token');
+  await db.settings.delete('last_sync_time');
+}
+

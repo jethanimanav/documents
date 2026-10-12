@@ -8,6 +8,8 @@ import type { DocItem, DocCategory } from '../types';
 export const SETTING_ROOT_FOLDER_ID = 'root_folder_id';
 export const SETTING_CHANGES_TOKEN = 'drive_changes_token';
 export const SETTING_LAST_SYNC_TIME = 'last_sync_time';
+export const SETTING_LAST_SYNC_DURATION = 'last_sync_duration_ms';
+export const SETTING_LAST_SYNC_ITEMS = 'last_sync_items_scanned';
 export const SETTING_CATEGORY_RULES = 'category_rules';
 
 export interface SyncProgress {
@@ -17,6 +19,8 @@ export interface SyncProgress {
   currentFolder?: string;
   errorMessage?: string;
   lastSyncTime?: number;
+  lastSyncDurationMs?: number;
+  lastSyncItemsScanned?: number;
 }
 
 type SyncListener = (progress: SyncProgress) => void;
@@ -42,8 +46,12 @@ export class DriveSyncService {
 
   private async loadLastSyncTime(): Promise<void> {
     const last = await getSetting<number>(SETTING_LAST_SYNC_TIME, 0);
+    const duration = await getSetting<number>(SETTING_LAST_SYNC_DURATION, 0);
+    const items = await getSetting<number>(SETTING_LAST_SYNC_ITEMS, 0);
     if (last) {
       this.progress.lastSyncTime = last;
+      this.progress.lastSyncDurationMs = duration;
+      this.progress.lastSyncItemsScanned = items;
       this.notify();
     }
   }
@@ -71,6 +79,8 @@ export class DriveSyncService {
     if (this.isSyncing) return;
     this.isSyncing = true;
 
+    const syncStartTime = Date.now();
+
     try {
       const rootInput = await getSetting<string>(SETTING_ROOT_FOLDER_ID, '');
       const rootFolderId = extractFolderId(rootInput);
@@ -85,9 +95,14 @@ export class DriveSyncService {
         try {
           const success = await this.performIncrementalSync(rootFolderId, existingToken);
           if (success) {
+            const durationMs = Date.now() - syncStartTime;
             this.progress.status = 'synced';
             this.progress.lastSyncTime = Date.now();
+            this.progress.lastSyncDurationMs = durationMs;
+            this.progress.lastSyncItemsScanned = this.progress.docsDiscovered;
             await setSetting(SETTING_LAST_SYNC_TIME, this.progress.lastSyncTime);
+            await setSetting(SETTING_LAST_SYNC_DURATION, durationMs);
+            await setSetting(SETTING_LAST_SYNC_ITEMS, this.progress.docsDiscovered);
             this.notify();
             return;
           }
@@ -98,9 +113,14 @@ export class DriveSyncService {
 
       // Perform full recursive walk
       await this.performFullSync(rootFolderId);
+      const durationMs = Date.now() - syncStartTime;
       this.progress.status = 'synced';
       this.progress.lastSyncTime = Date.now();
+      this.progress.lastSyncDurationMs = durationMs;
+      this.progress.lastSyncItemsScanned = this.progress.docsDiscovered;
       await setSetting(SETTING_LAST_SYNC_TIME, this.progress.lastSyncTime);
+      await setSetting(SETTING_LAST_SYNC_DURATION, durationMs);
+      await setSetting(SETTING_LAST_SYNC_ITEMS, this.progress.docsDiscovered);
       this.notify();
     } catch (err: any) {
       console.error('Sync failed:', err);
